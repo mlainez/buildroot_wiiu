@@ -79,7 +79,7 @@ address automatically.
 
 [linux-wiiu]: https://gitlab.com/linux-wiiu/linux-wiiu
 [linux-loader]: https://gitlab.com/linux-wiiu/linux-loader
-[toolchain]: https://github.com/Spin42/nerves_toolchain_wiiu_ppc
+[toolchain]: https://github.com/mlainez/nerves_toolchain_wiiu_ppc
 [linux-firmware]: https://git.kernel.org/pub/scm/linux/kernel/git/firmware/linux-firmware.git/tree/brcm
 [hacks-guide]: https://wiiu.hacks.guide
 [aroma.foryour.cafe]: https://aroma.foryour.cafe
