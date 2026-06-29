@@ -1,0 +1,48 @@
+# Wii U kernel-config fragment — merged on top of arch/powerpc/configs/wiiu_defconfig.
+# Buildroot applies this via BR2_LINUX_KERNEL_CONFIG_FRAGMENT_FILES.
+#
+# Each of these defaults to y in current Kconfig (given the parents already on
+# in wiiu_defconfig), so this fragment is defensive — it locks in the bits we
+# need for a HDMI-console-with-USB-keyboard prompt at first boot.
+
+# Virtual terminal layer + getty target
+CONFIG_VT=y
+CONFIG_VT_CONSOLE=y
+CONFIG_VT_HW_CONSOLE_BINDING=y
+CONFIG_UNIX98_PTYS=y
+
+# Framebuffer console on the Latte (R600) display
+CONFIG_FRAMEBUFFER_CONSOLE=y
+CONFIG_FRAMEBUFFER_CONSOLE_DETECT_PRIMARY=y
+CONFIG_LOGO=y
+
+# Input core + keyboard support so VT receives keystrokes
+CONFIG_INPUT=y
+CONFIG_INPUT_KEYBOARD=y
+
+# USB HID — the generic driver that binds any standards-compliant USB keyboard
+CONFIG_HID=y
+CONFIG_USB_HID=y
+CONFIG_HID_GENERIC=y
+
+# Ship modules uncompressed so depmod can index them (a kmod without XZ
+# support produces an empty modules.alias from XZ-compressed modules).
+CONFIG_MODULE_COMPRESS_NONE=y
+# CONFIG_MODULE_COMPRESS_XZ is not set
+
+# On-board WiFi (Broadcom BCM43362, SDIO). Modules autoload by modalias;
+# firmware/nvram ship in the rootfs overlay; patches/linux/0001 forces the
+# wifi SDHCI controller to PIO (its SDMA is broken).
+CONFIG_CFG80211=m
+CONFIG_MAC80211=m
+CONFIG_BRCMUTIL=m
+CONFIG_BRCMFMAC=m
+CONFIG_BRCMFMAC_SDIO=y
+
+# USB Ethernet adapters
+CONFIG_USB_NET_DRIVERS=y
+CONFIG_USB_USBNET=y
+CONFIG_USB_NET_AX8817X=y
+CONFIG_USB_NET_AX88179_178A=y
+CONFIG_USB_NET_CDCETHER=y
+CONFIG_USB_NET_SMSC95XX=y

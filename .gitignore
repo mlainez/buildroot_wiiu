@@ -1,0 +1,8 @@
+/output/
+/dl/
+/secrets.env
+*.swp
+*.swo
+.DS_Store
+board/wiiu/sdcard/
+/**/*.img

@@ -1,0 +1,2 @@
+name: WIIU
+desc: Buildroot external tree for the Nintendo Wii U (linux-wiiu, SMP, Espresso)

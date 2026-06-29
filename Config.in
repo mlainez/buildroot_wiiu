@@ -1,0 +1,2 @@
+# No custom packages yet. Keep the file present so buildroot's
+# BR2_EXTERNAL machinery can source it.

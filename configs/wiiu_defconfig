@@ -1,0 +1,88 @@
+# Buildroot config for the Nintendo Wii U (Espresso/Latte, SMP)
+
+# --- Architecture --------------------------------------------------------
+BR2_powerpc=y
+BR2_powerpc_750=y
+
+# --- Toolchain (prebuilt external SDK) -----------------------------------
+# Built by nerves_toolchain_wiiu_ppc; its gcc defaults to -mcpu=espresso and
+# carries the SMP atomic-errata patches, so gcc/glibc aren't rebuilt here.
+# This is what lets us track a recent Buildroot (the source-built toolchain
+# would otherwise pin us to whatever ships gcc 13.2.0 + glibc 2.38).
+BR2_TOOLCHAIN_EXTERNAL=y
+BR2_TOOLCHAIN_EXTERNAL_CUSTOM=y
+BR2_TOOLCHAIN_EXTERNAL_DOWNLOAD=y
+BR2_TOOLCHAIN_EXTERNAL_URL="https://github.com/Spin42/nerves_toolchain_wiiu_ppc/releases/download/v13.2.0/nerves_toolchain_wiiu_ppc-linux_${shell uname -m}-13.2.0.tar.xz"
+BR2_TOOLCHAIN_EXTERNAL_CUSTOM_PREFIX="powerpc-nerves-linux-gnu"
+BR2_TOOLCHAIN_EXTERNAL_GCC_13=y
+BR2_TOOLCHAIN_EXTERNAL_HEADERS_6_6=y
+BR2_TOOLCHAIN_EXTERNAL_CUSTOM_GLIBC=y
+# BR2_TOOLCHAIN_EXTERNAL_INET_RPC is not set
+BR2_TOOLCHAIN_EXTERNAL_CXX=y
+BR2_TAR_OPTIONS="--no-same-owner"
+# patches/ still holds the kernel wifi patch (patches/linux/).
+BR2_GLOBAL_PATCH_DIR="$(BR2_EXTERNAL_WIIU_PATH)/patches"
+
+# --- Kernel --------------------------------------------------------------
+BR2_LINUX_KERNEL=y
+BR2_LINUX_KERNEL_CUSTOM_GIT=y
+BR2_LINUX_KERNEL_CUSTOM_REPO_URL="https://gitlab.com/linux-wiiu/linux-wiiu.git"
+BR2_LINUX_KERNEL_CUSTOM_REPO_VERSION="rewrite-6.6-smp"
+BR2_LINUX_KERNEL_USE_DEFCONFIG=y
+BR2_LINUX_KERNEL_DEFCONFIG="wiiu"
+BR2_LINUX_KERNEL_CONFIG_FRAGMENT_FILES="$(BR2_EXTERNAL_WIIU_PATH)/board/wiiu/linux.config.fragment"
+# dtbImage.wiiu = zImage with embedded DTB; the only image linux-loader/Petitboot loads.
+BR2_LINUX_KERNEL_IMAGE_TARGET_CUSTOM=y
+BR2_LINUX_KERNEL_IMAGE_TARGET_NAME="dtbImage.wiiu"
+BR2_LINUX_KERNEL_IMAGE_NAME="dtbImage.wiiu"
+BR2_LINUX_KERNEL_NEEDS_HOST_OPENSSL=y
+
+# --- System --------------------------------------------------------------
+BR2_TARGET_GENERIC_HOSTNAME="wiiu"
+BR2_TARGET_GENERIC_ISSUE="Buildroot on Nintendo Wii U"
+BR2_INIT_BUSYBOX=y
+# eudev (real udev) is required by NetworkManager.
+BR2_ROOTFS_DEVICE_CREATION_DYNAMIC_EUDEV=y
+# Unhide non-busybox alternatives so bash can be selected as /bin/sh.
+BR2_PACKAGE_BUSYBOX_SHOW_OTHERS=y
+BR2_SYSTEM_BIN_SH_BASH=y
+BR2_TARGET_GENERIC_GETTY=y
+BR2_TARGET_GENERIC_GETTY_PORT="tty1"
+BR2_TARGET_GENERIC_ROOT_PASSWD="wiiu"
+BR2_SYSTEM_DHCP="eth0"
+
+# --- Rootfs --------------------------------------------------------------
+BR2_ROOTFS_OVERLAY="$(BR2_EXTERNAL_WIIU_PATH)/board/wiiu/rootfs-overlay"
+BR2_ROOTFS_POST_BUILD_SCRIPT="$(BR2_EXTERNAL_WIIU_PATH)/board/wiiu/post-build.sh"
+BR2_ROOTFS_POST_IMAGE_SCRIPT="$(BR2_EXTERNAL_WIIU_PATH)/board/wiiu/post-image.sh"
+BR2_TARGET_ROOTFS_EXT2=y
+BR2_TARGET_ROOTFS_EXT2_4=y
+# Mirror Adelie/Gentoo's mkfs flags: ^metadata_csum,^64bit are the two features
+# linux-wiiu's ext4 driver doesn't handle.
+BR2_TARGET_ROOTFS_EXT2_MKFS_OPTIONS="-r 1 -N 0 -m 5 -O ^metadata_csum,^64bit"
+BR2_TARGET_ROOTFS_EXT2_SIZE="512M"
+BR2_TARGET_ROOTFS_TAR=y
+BR2_TARGET_ROOTFS_TAR_GZIP=y
+
+# --- Userspace baseline --------------------------------------------------
+BR2_PACKAGE_BASH=y
+BR2_PACKAGE_HTOP=y
+BR2_PACKAGE_NANO=y
+BR2_PACKAGE_DROPBEAR=y
+BR2_PACKAGE_KMOD=y
+BR2_PACKAGE_KMOD_TOOLS=y
+BR2_PACKAGE_E2FSPROGS=y
+BR2_PACKAGE_DOSFSTOOLS=y
+
+# --- WiFi (on-board Broadcom BCM43362) -----------------------------------
+# Firmware + nvram ship in board/wiiu/rootfs-overlay/lib/firmware/brcm.
+# NetworkManager drives wpa_supplicant over D-Bus; connect with nmcli/nmtui.
+BR2_PACKAGE_WPA_SUPPLICANT=y
+BR2_PACKAGE_WPA_SUPPLICANT_NL80211=y
+BR2_PACKAGE_WPA_SUPPLICANT_CLI=y
+BR2_PACKAGE_WPA_SUPPLICANT_PASSPHRASE=y
+BR2_PACKAGE_WPA_SUPPLICANT_DBUS=y
+BR2_PACKAGE_IW=y
+BR2_PACKAGE_NETWORK_MANAGER=y
+BR2_PACKAGE_NETWORK_MANAGER_CLI=y
+BR2_PACKAGE_NETWORK_MANAGER_TUI=y
