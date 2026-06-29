@@ -1,25 +1,32 @@
 # Kernel patches
 
-## 0001-sdhci-of-hlwd-force-PIO-for-wiiu-wifi.patch
+These are applied on top of the pinned `rewrite-6.6` kernel (see
+`configs/wiiu_defconfig`). They add SMP — running Linux on all 3 Espresso
+cores — which lives only on linux-wiiu's `rewrite-6.6-smp` branch. That branch
+trails `rewrite-6.6` by ~26 LTS releases and lacks the WiFi fix, so instead of
+using it we track `rewrite-6.6` and carry just its two SMP commits here
+(cherry-picked from `rewrite-6.6-smp`, by Ash Logan / linux-wiiu).
 
-Makes the Wii U's built-in WiFi work.
+The config side (`CONFIG_SMP=y`, `CONFIG_NR_CPUS=3`) is set in
+`board/wiiu/linux.config.fragment`.
 
-**The problem.** The WiFi chip is wired up like an SD card and talks through the
-same kind of controller the console uses for SD cards. Before WiFi can run, the
-system uploads a small firmware file into the chip, then reads it back to check
-it arrived. On the Wii U that read-back came back wrong — only the first few
-bytes were correct and the rest were zeros — so the kernel reported the firmware
-as "corrupted" and WiFi never started.
+## 0001-wiiu-Add-Espresso-SMP-erratum-to-atomic-ops.patch
 
-**The cause.** The controller can move data two ways: in bulk by itself (fast,
-called DMA), or one small piece at a time done by the CPU (slower, called PIO).
-The Wii U WiFi controller's bulk mode is broken — it sends the first piece and
-then stops, which is exactly the "first bytes fine, rest zeros" pattern we saw.
-The SD-card slot uses an almost identical controller and its bulk mode works
-fine, so the problem is specific to the WiFi one.
+The Espresso has a hardware bug in its atomic operations: a store-conditional
+(`stwcx.`) can succeed when it shouldn't across cores, so without a workaround
+shared data gets corrupted once more than one core runs. The patch inserts the
+required cache flush (`dcbst`) before the store-conditional in every atomic
+primitive (atomics, bitops, cmpxchg, futex, spinlocks), making locking correct
+under SMP.
 
-**The fix.** Tell the kernel to use the slow-but-reliable one-piece-at-a-time
-mode (PIO) for the WiFi controller only, leaving the SD-card controller on fast
-bulk mode. The two controllers sit at fixed hardware addresses, so the patch
-spots the WiFi one by its address (`0x0d080000`) and switches just that one.
-WiFi firmware is tiny, so the slower mode costs nothing noticeable.
+## 0002-wiiu-SMP-support.patch
+
+The actual multi-core bring-up: start the secondary Espresso cores, wire up
+inter-processor interrupts over the Latte IPC, and describe the extra CPUs in
+the device tree. Without this only one core ever runs.
+
+## Refreshing on a kernel bump
+
+If you move the pinned SHA forward, re-cherry-pick these two commits onto the
+new base and regenerate the patches; conflicts are most likely in the PPC
+atomic headers.

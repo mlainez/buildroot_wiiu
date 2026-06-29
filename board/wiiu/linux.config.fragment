@@ -5,6 +5,12 @@
 # in wiiu_defconfig), so this fragment is defensive — it locks in the bits we
 # need for a HDMI-console-with-USB-keyboard prompt at first boot.
 
+# SMP — use all 3 Espresso cores. The SMP support and the Espresso atomic
+# erratum come from patches/linux/ (cherry-picked from linux-wiiu's
+# rewrite-6.6-smp); these two symbols are all the wiiu defconfig needs on top.
+CONFIG_SMP=y
+CONFIG_NR_CPUS=3
+
 # Virtual terminal layer + getty target
 CONFIG_VT=y
 CONFIG_VT_CONSOLE=y
@@ -31,8 +37,8 @@ CONFIG_MODULE_COMPRESS_NONE=y
 # CONFIG_MODULE_COMPRESS_XZ is not set
 
 # On-board WiFi (Broadcom BCM43362, SDIO). Modules autoload by modalias;
-# firmware/nvram ship in the rootfs overlay; patches/linux/0001 forces the
-# wifi SDHCI controller to PIO (its SDMA is broken).
+# firmware/nvram ship in the rootfs overlay. The WiFi SDHCI DMA fix is already
+# in the rewrite-6.6 base (device-tree "no-dma"), so no patch is needed.
 CONFIG_CFG80211=m
 CONFIG_MAC80211=m
 CONFIG_BRCMUTIL=m

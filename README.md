@@ -53,9 +53,10 @@ the boot menu. Log in as `root` / `wiiu` on an HDMI screen with a USB keyboard.
 
 ## WiFi
 
-The built-in WiFi works. A kernel patch (`patches/linux/0001-…`) works around a
-bug in the Wii U's WiFi controller that otherwise stops the WiFi firmware from
-loading; that firmware (from [linux-firmware]) is included. Connect with:
+The built-in WiFi works. The fix for the Wii U's WiFi controller (its DMA
+engine corrupts transfers, so the kernel forces it to PIO) is already in the
+`rewrite-6.6` kernel; the firmware (from [linux-firmware]) is included here.
+Connect with:
 
 ```sh
 nmcli device wifi connect "network name" password "password"
@@ -73,7 +74,7 @@ address automatically.
 ## Built with
 
 - Buildroot 2026.05
-- [linux-wiiu] kernel (Linux 6.6)
+- [linux-wiiu] kernel (`rewrite-6.6`, Linux 6.6.106) + SMP patches for all 3 cores
 - A prebuilt PowerPC toolchain ([nerves_toolchain_wiiu_ppc][toolchain]),
   downloaded during the build.
 

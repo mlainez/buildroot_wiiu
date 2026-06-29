@@ -20,14 +20,19 @@ BR2_TOOLCHAIN_EXTERNAL_CUSTOM_GLIBC=y
 # BR2_TOOLCHAIN_EXTERNAL_INET_RPC is not set
 BR2_TOOLCHAIN_EXTERNAL_CXX=y
 BR2_TAR_OPTIONS="--no-same-owner"
-# patches/ still holds the kernel wifi patch (patches/linux/).
+# patches/ holds the SMP commits applied on top of rewrite-6.6 (patches/linux/).
 BR2_GLOBAL_PATCH_DIR="$(BR2_EXTERNAL_WIIU_PATH)/patches"
 
 # --- Kernel --------------------------------------------------------------
 BR2_LINUX_KERNEL=y
 BR2_LINUX_KERNEL_CUSTOM_GIT=y
 BR2_LINUX_KERNEL_CUSTOM_REPO_URL="https://gitlab.com/linux-wiiu/linux-wiiu.git"
-BR2_LINUX_KERNEL_CUSTOM_REPO_VERSION="rewrite-6.6-smp"
+# Pinned to the rewrite-6.6 tip (Linux 6.6.106). It already carries the WiFi
+# fix, GameCube audio and the r600fb display work; SMP is added on top via
+# patches/linux/. The upstream rewrite-6.6-smp branch is ~26 LTS releases
+# behind, so we track rewrite-6.6 instead. Bumping this SHA may need the SMP
+# patches refreshed.
+BR2_LINUX_KERNEL_CUSTOM_REPO_VERSION="b84eb2dde8e2387d0e7adc145a171948fc390c97"
 BR2_LINUX_KERNEL_USE_DEFCONFIG=y
 BR2_LINUX_KERNEL_DEFCONFIG="wiiu"
 BR2_LINUX_KERNEL_CONFIG_FRAGMENT_FILES="$(BR2_EXTERNAL_WIIU_PATH)/board/wiiu/linux.config.fragment"

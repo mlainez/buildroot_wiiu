@@ -1,0 +1,598 @@
+From bb746c57101c748aea20a5dc2d130cbfba22bb2a Mon Sep 17 00:00:00 2001
+From: Ash Logan <ash@heyquark.com>
+Date: Sat, 2 Nov 2024 21:50:49 +1100
+Subject: [PATCH 2/2] wiiu: SMP support
+
+Co-Developed-By: loganius <www.wiiulinux.net>
+---
+ arch/powerpc/boot/dts/wiiu.dts          |  61 +++++++++--
+ arch/powerpc/include/asm/reg.h          |   4 +
+ arch/powerpc/kernel/cpu_setup_6xx.S     |  39 ++++++-
+ arch/powerpc/kernel/head_book3s_32.S    |  27 ++++-
+ arch/powerpc/platforms/wiiu/Kconfig     |   1 +
+ arch/powerpc/platforms/wiiu/latte-ipc.c |  59 -----------
+ arch/powerpc/platforms/wiiu/latte-pic.c |  75 ++++++++++----
+ arch/powerpc/platforms/wiiu/setup.c     | 129 ++++++++++++++++++++++--
+ 8 files changed, 299 insertions(+), 96 deletions(-)
+
+diff --git a/arch/powerpc/boot/dts/wiiu.dts b/arch/powerpc/boot/dts/wiiu.dts
+index 35c2a45ac..1aa06b19b 100644
+--- a/arch/powerpc/boot/dts/wiiu.dts
++++ b/arch/powerpc/boot/dts/wiiu.dts
+@@ -21,10 +21,10 @@ memory@0 {
+ 		device_type = "memory";
+ 		reg = <0x00000000 0x02000000>;	/* MEM1 - 32MiB */
+ 	};
+-	memory@8000000 {
+-		device_type = "memory";
+-		reg = <0x08000000 0x00300000>;	/* MEM0 - 3MiB  */
+-	};
++//	memory@8000000 {
++//		device_type = "memory";
++//		reg = <0x08000000 0x00300000>;	/* MEM0 - 3MiB  */
++//	};
+ 	memory@10000000 {
+ 		device_type = "memory";
+ 		reg = <0x10000000 0x80000000>;	/* MEM2 - 2GiB  */
+@@ -61,7 +61,6 @@ cpus {
+ 		#address-cells = <1>;
+ 		#size-cells = <0>;
+ 
+-		/* TODO: Add SMP */
+ 		PowerPC,espresso@0 {
+ 			device_type = "cpu";
+ 			reg = <0>;
+@@ -87,6 +86,56 @@ L2_0:l2-cache {
+ 				cache-sets = <2048>;
+ 			};
+ 		};
++		PowerPC,espresso@1 {
++			device_type = "cpu";
++			reg = <1>;
++			clock-frequency = <1243125000>;     /* 1.243125GHz */
++			bus-frequency = <248625000>;        /* 248.625MHz core-to-bus 5x */
++			timebase-frequency = <62156250>;    /* 1/4 of the bus clock */
++			i-cache-size = <32768>; /* 32K icache */
++			i-cache-line-size = <32>;
++			i-cache-block-size = <32>;
++			i-cache-sets = <128>;
++			d-cache-size = <32768>; /* 32K dcache */
++			d-cache-line-size = <32>;
++			d-cache-block-size = <32>;
++			d-cache-sets = <128>;
++			next-level-cache = <&L2_1>;
++			L2_1:l2-cache {
++				compatible = "cache";
++				cache-level = <2>;
++				cache-unified;
++				cache-size = <0x200000>; /* 2048KB L2 */
++				cache-line-size = <64>;
++				cache-block-size = <32>;
++				cache-sets = <2048>;
++			};
++		};
++		PowerPC,espresso@2 {
++			device_type = "cpu";
++			reg = <2>;
++			clock-frequency = <1243125000>;     /* 1.243125GHz */
++			bus-frequency = <248625000>;        /* 248.625MHz core-to-bus 5x */
++			timebase-frequency = <62156250>;    /* 1/4 of the bus clock */
++			i-cache-size = <32768>; /* 32K icache */
++			i-cache-line-size = <32>;
++			i-cache-block-size = <32>;
++			i-cache-sets = <128>;
++			d-cache-size = <32768>; /* 32K dcache */
++			d-cache-line-size = <32>;
++			d-cache-block-size = <32>;
++			d-cache-sets = <128>;
++			next-level-cache = <&L2_2>;
++			L2_2:l2-cache {
++				compatible = "cache";
++				cache-level = <2>;
++				cache-unified;
++				cache-size = <0x80000>; /* 512KB L2 */
++				cache-line-size = <64>;
++				cache-block-size = <32>;
++				cache-sets = <2048>;
++			};
++		};
+ 	};
+ 
+ 	soc {
+@@ -253,7 +302,7 @@ latte_aip_prot: aip@0d800070 {
+ 
+ 		latte_exi: exi@0d806800 {
+ 			compatible = "nintendo,latte-exi", "nintendo,hollywood-exi", "nintendo,flipper-exi";
+-			reg = <0x0d806800 0x40>;
++			reg = <0x0d806800 0x60>;
+ 		};
+ 
+ 		gpio: gpio@d8000c0 {
+diff --git a/arch/powerpc/include/asm/reg.h b/arch/powerpc/include/asm/reg.h
+index 2485cada0..562b41083 100644
+--- a/arch/powerpc/include/asm/reg.h
++++ b/arch/powerpc/include/asm/reg.h
+@@ -635,6 +635,10 @@
+ #define SPRN_HID4_GEKKO	0x3F3		/* Gekko HID4 */
+ #define SPRN_HID5	0x3F6		/* 970 HID5 */
+ #define SPRN_HID5_ESPRESSO 0x3B0	/* Espresso HID5 */
++#define SPRN_SCR_ESPRESSO 0x3B3		/* Espresso SCR */
++#define SPRN_PIR_ESPRESSO 0x3EF		/* Espresso PIR */
++#define SPRN_CAR_ESPRESSO 0x3B4		/* Espresso CAR */
++#define SPRN_BCR_ESPRESSO 0x3B5		/* Espresso BCR */
+ #define SPRN_HID6	0x3F9	/* BE HID 6 */
+ #define   HID6_LB	(0x0F<<12) /* Concurrent Large Page Modes */
+ #define   HID6_DLP	(1<<20)	/* Disable all large page modes (4K only) */
+diff --git a/arch/powerpc/kernel/cpu_setup_6xx.S b/arch/powerpc/kernel/cpu_setup_6xx.S
+index 34e2fa6cb..8adc27ea7 100644
+--- a/arch/powerpc/kernel/cpu_setup_6xx.S
++++ b/arch/powerpc/kernel/cpu_setup_6xx.S
+@@ -69,9 +69,9 @@ _GLOBAL(__setup_cpu_750fx)
+ _GLOBAL(__setup_cpu_espresso)
+ 	mflr	r5
+ 	bl	__init_fpu_registers
++	bl	setup_espresso
+ 	bl	setup_common_caches
+ 	bl	setup_750_7400_hid0
+-	bl	setup_espresso
+ 	mtlr	r5
+ 	blr
+ _GLOBAL(__setup_cpu_7400)
+@@ -246,6 +246,39 @@ SYM_FUNC_START_LOCAL(setup_espresso)
+ 	mtspr SPRN_HID5_ESPRESSO, r8
+ 	sync
+ 
++	// ash: where does r24 come from here?
++	cmpwi 0, r24, 0
++	bne espresso_not_core_0
++
++	// Disable keystores and bootrom (ash: probably not needed)
++	mfspr r8, SPRN_SCR_ESPRESSO
++	lis r9, 0x4000
++	andc r8, r8, r9
++	mtspr SPRN_SCR_ESPRESSO, r8
++	sync
++	isync
++
++	// Set ancast keyset (ash: probably not needed)
++	mfspr r8, SPRN_SCR_ESPRESSO
++	oris r8, r8, 0x8000
++	mtspr SPRN_SCR_ESPRESSO, r8
++	sync
++	isync
++
++	mfspr r8, SPRN_CAR_ESPRESSO
++	oris r8, r8, 0xfc10
++	mtspr SPRN_CAR_ESPRESSO, r8
++	sync
++	isync
++
++	mfspr r8, SPRN_BCR_ESPRESSO
++	oris r8, r8, 0x0800
++	mtspr SPRN_BCR_ESPRESSO, r8
++	sync
++	isync
++
++espresso_not_core_0:
++
+ 	lis r8, 0xb3b0 // 64B fetch, depth 4, SBE, ST0, LPE, L2MUM, L2CFI
+ 	mtspr SPRN_HID4_GEKKO, r8
+ 	sync
+@@ -386,6 +419,10 @@ _GLOBAL(__save_cpu_setup)
+ 
+ 	/* Save HID0 (common to all CONFIG_PPC_BOOK3S_32 cpus) */
+ 	mfspr	r3,SPRN_HID0
++	/* Mask out the cache & DPM bits */
++	lis	r4,0xffef
++	ori	r4,r4,0x3fff
++	and	r3,r3,r4
+ 	stw	r3,CS_HID0(r5)
+ 
+ 	/* Now deal with CPU type dependent registers */
+diff --git a/arch/powerpc/kernel/head_book3s_32.S b/arch/powerpc/kernel/head_book3s_32.S
+index 9fc95d498..a76670602 100644
+--- a/arch/powerpc/kernel/head_book3s_32.S
++++ b/arch/powerpc/kernel/head_book3s_32.S
+@@ -620,7 +620,7 @@ ALT_MMU_FTR_SECTION_END_IFSET(MMU_FTR_NEED_DTLB_SW_LRU)
+ #define altivec_assist_exception	unknown_exception
+ #endif
+ 
+-#ifndef CONFIG_TAU_INT
++#if !defined(CONFIG_TAU_INT) && !defined(CONFIG_WIIU)
+ #define TAUException	unknown_async_exception
+ #endif
+ 
+@@ -800,6 +800,31 @@ _GLOBAL(copy_and_flush)
+ 	blr
+ 
+ #ifdef CONFIG_SMP
++	.globl __secondary_start_wiiu
++__secondary_start_wiiu:
++	mfspr	r3, SPRN_HID5_ESPRESSO
++	/* Enable HID5 and PIR */
++	oris	r3, r3, 0xe000
++	mtspr	SPRN_HID5_ESPRESSO, r3
++	isync
++
++	mfspr	r3, SPRN_PIR_ESPRESSO
++	stw	r3, __secondary_hold_acknowledge@l(0)
++	mr	r24, r3 // ash: this might be where it comes from in setup_cpu_espresso..?
++
++	// Disable and re-enable L2 cache
++	li	r3, 0
++	bl	_set_L2CR
++
++	lis	r3, 0x8020
++	// On core 1, the cache is bigger!
++	cmpwi	0, r24, 1
++	bne	1f
++	oris	r3, r3, 0x2000
++	// Enable the cache and finish
++1:	bl _set_L2CR
++	b __secondary_start
++
+ 	.globl __secondary_start_mpc86xx
+ __secondary_start_mpc86xx:
+ 	mfspr	r3, SPRN_PIR
+diff --git a/arch/powerpc/platforms/wiiu/Kconfig b/arch/powerpc/platforms/wiiu/Kconfig
+index 691dca5f0..0015c0dae 100644
+--- a/arch/powerpc/platforms/wiiu/Kconfig
++++ b/arch/powerpc/platforms/wiiu/Kconfig
+@@ -10,6 +10,7 @@ config WIIU
+ 	select USB_EHCI_BIG_ENDIAN_MMIO if USB_SUPPORT
+ 	select USB_OHCI_BIG_ENDIAN_MMIO if USB_SUPPORT
+ 	select ESPRESSO_ERRATA
++	select PPC_SMP_MUXED_IPI if SMP
+ 	help
+ 	  Select WIIU if configuring for the Nintendo Wii U.
+ 	  More information at: <https://linux-wiiu.org/>
+diff --git a/arch/powerpc/platforms/wiiu/latte-ipc.c b/arch/powerpc/platforms/wiiu/latte-ipc.c
+index 1d29641ae..fcd394ee4 100644
+--- a/arch/powerpc/platforms/wiiu/latte-ipc.c
++++ b/arch/powerpc/platforms/wiiu/latte-ipc.c
+@@ -50,65 +50,6 @@ void latteipc_starbuck_msg(u32 msg) {
+ 		barrier();
+ }
+ 
+-/*
+- * Causes an interrupt on another CPU. We'll use the IPC Y1 flag for this and just pretend to be the Starbuck
+- * to trigger it.
+- */
+-void latteipc_ipi_cpu(int cpu) {
+-	lt_ipc_t *target_ipc = per_cpu(latteipc_io_latte, cpu);
+-	printk("%s: ipi to %d\n", __func__, cpu);
+-	setbits32(&target_ipc->iopctrl, LT_IPC_IOPCTRL_Y1);
+-}
+-
+-static irqreturn_t latteipc_ipi_intr(int irq, void *d) {
+-	lt_ipc_t *ipc = this_cpu_ptr(latteipc_io_latte);
+-	// ack the irq
+-	setbits32(&ipc->ppcctrl, LT_IPC_PPCCTRL_Y1);
+-
+-#ifdef CONFIG_SMP
+-	smp_ipi_demux();
+-#endif
+-	return IRQ_HANDLED;
+-}
+-
+-void __init latteipc_setup_ipis(void) {
+-	unsigned cpu;
+-	int irq, err;
+-	struct device_node *np;
+-	unsigned long res;
+-
+-	np = of_find_compatible_node(NULL, NULL, "nintendo,latte-ipc");
+-	if (!np) {
+-		udbg_printf("%s: IPC node not found\n", __func__);
+-		return;
+-	}
+-
+-	for_each_present_cpu (cpu) {
+-		lt_ipc_t **ipc = per_cpu_ptr(&latteipc_io_latte, cpu);
+-
+-		pr_info("starting IPC on %08x (cpu %d)\n", (unsigned)*ipc, cpu);
+-		// Ack and enable interrupts for Y1
+-		setbits32(&(*ipc)->ppcctrl, LT_IPC_PPCCTRL_IY1 | LT_IPC_PPCCTRL_Y1);
+-		res = ioread32(&(*ipc)->ppcctrl);
+-
+-		irq = irq_of_parse_and_map(np, cpu + 1); // +1 to skip over compat-mode IRQ
+-		if (!irq) {
+-			pr_err("%s: Failed to map IRQ!\n", __func__);
+-			goto out;
+-		}
+-
+-		pr_info("requesting IRQ #%d (%08lx)\n", irq, res);
+-
+-		err = request_irq(irq, latteipc_ipi_intr, IRQF_PERCPU | IRQF_NO_THREAD | IRQF_NO_SUSPEND, "IPI", NULL);
+-		WARN(err < 0, "unable to request IPI %d for core %u\n", irq, cpu);
+-	}
+-
+-	pr_info("<- %s\n", __func__);
+-
+-out:
+-	of_node_put(np);
+-}
+-
+ /*
+  * Maps and initialises the IPC controller hardware.
+  */
+diff --git a/arch/powerpc/platforms/wiiu/latte-pic.c b/arch/powerpc/platforms/wiiu/latte-pic.c
+index 7e3f49844..d14e81223 100644
+--- a/arch/powerpc/platforms/wiiu/latte-pic.c
++++ b/arch/powerpc/platforms/wiiu/latte-pic.c
+@@ -30,21 +30,16 @@ static DEFINE_PER_CPU(struct lt_pic *, lt_pic_cpu);
+  * These handle both AHBALL and AHBLT IRQs, with AHBLT mapped above 32
+  */
+ 
+-static void latte_pic_mask_and_ack(struct irq_data *d)
++static void latte_pic_ack_irq(struct lt_pic *pic, u32 irq)
+ {
+-	struct lt_pic *pic = *this_cpu_ptr(&lt_pic_cpu);
+-	u32 irq = irqd_to_hwirq(d);
+-
+ 	if (irq < LATTE_AHBALL_NR_IRQS) {
+ 		u32 mask = 1 << irq;
+ 
+ 		out_be32(&pic->ahball_icr, mask);
+-		clrbits32(&pic->ahball_imr, mask);
+ 	} else {
+ 		u32 mask = 1 << (irq - 32);
+ 
+ 		out_be32(&pic->ahblt_icr, mask);
+-		clrbits32(&pic->ahblt_imr, mask);
+ 	}
+ }
+ 
+@@ -53,14 +48,19 @@ static void latte_pic_ack(struct irq_data *d)
+ 	struct lt_pic *pic = *this_cpu_ptr(&lt_pic_cpu);
+ 	u32 irq = irqd_to_hwirq(d);
+ 
++	latte_pic_ack_irq(pic, irq);
++}
++
++static void latte_pic_mask_irq(struct lt_pic *pic, u32 irq)
++{
+ 	if (irq < LATTE_AHBALL_NR_IRQS) {
+ 		u32 mask = 1 << irq;
+ 
+-		out_be32(&pic->ahball_icr, mask);
++		clrbits32(&pic->ahball_imr, mask);
+ 	} else {
+ 		u32 mask = 1 << (irq - 32);
+ 
+-		out_be32(&pic->ahblt_icr, mask);
++		clrbits32(&pic->ahblt_imr, mask);
+ 	}
+ }
+ 
+@@ -69,14 +69,19 @@ static void latte_pic_mask(struct irq_data *d)
+ 	struct lt_pic *pic = *this_cpu_ptr(&lt_pic_cpu);
+ 	u32 irq = irqd_to_hwirq(d);
+ 
++	latte_pic_mask_irq(pic, irq);
++}
++
++static void latte_pic_unmask_irq(struct lt_pic *pic, u32 irq)
++{
+ 	if (irq < LATTE_AHBALL_NR_IRQS) {
+ 		u32 mask = 1 << irq;
+ 
+-		clrbits32(&pic->ahball_imr, mask);
++		setbits32(&pic->ahball_imr, mask);
+ 	} else {
+ 		u32 mask = 1 << (irq - 32);
+ 
+-		clrbits32(&pic->ahblt_imr, mask);
++		setbits32(&pic->ahblt_imr, mask);
+ 	}
+ }
+ 
+@@ -85,23 +90,51 @@ static void latte_pic_unmask(struct irq_data *d)
+ 	struct lt_pic *pic = *this_cpu_ptr(&lt_pic_cpu);
+ 	u32 irq = irqd_to_hwirq(d);
+ 
+-	if (irq < LATTE_AHBALL_NR_IRQS) {
+-		u32 mask = 1 << irq;
++	latte_pic_unmask_irq(pic, irq);
++}
+ 
+-		setbits32(&pic->ahball_imr, mask);
+-	} else {
+-		u32 mask = 1 << (irq - 32);
++static void latte_pic_mask_and_ack(struct irq_data *d)
++{
++	struct lt_pic *pic = *this_cpu_ptr(&lt_pic_cpu);
++	u32 irq = irqd_to_hwirq(d);
+ 
+-		setbits32(&pic->ahblt_imr, mask);
++	latte_pic_mask_irq(pic, irq);
++	latte_pic_ack_irq(pic, irq);
++}
++
++static int latte_pic_set_affinity(struct irq_data *data, const struct cpumask *dest, bool force)
++{
++	// HACK: we shouldn't just give every irq to cpu 0, it's unfair!
++	int cpu, target_cpu = 0;//irq_choose_cpu(dest);
++	struct lt_pic *target_pic = *per_cpu_ptr(&lt_pic_cpu, target_cpu);
++	u32 irq = irqd_to_hwirq(data);
++
++	if (!cpumask_test_cpu(target_cpu, dest))
++		pr_debug("%s: Kernel didn't want cpu %d. Doing it anyway\n", __func__, cpu);
++
++	for_each_present_cpu(cpu) {
++		struct lt_pic *pic = *per_cpu_ptr(&lt_pic_cpu, cpu);
++
++		// First, unsubscribe everyone.
++		latte_pic_mask_irq(pic, irq);
++		latte_pic_ack_irq(pic, irq);
++		pr_debug("%s: removed irq %d from cpu %d\n", __func__, irq, cpu);
+ 	}
++
++	// Give it to our target.
++	latte_pic_unmask_irq(target_pic, irq);
++	pr_debug("%s: giving irq %d to cpu %d\n", __func__, irq, target_cpu);
++
++	return IRQ_SET_MASK_OK;
+ }
+ 
+ static struct irq_chip latte_pic = {
+-	.name = "latte-pic",
+-	.irq_ack = latte_pic_ack,
+-	.irq_mask_ack = latte_pic_mask_and_ack,
+-	.irq_mask = latte_pic_mask,
+-	.irq_unmask = latte_pic_unmask,
++	.name			= "latte-pic",
++	.irq_ack		= latte_pic_ack,
++	.irq_mask_ack		= latte_pic_mask_and_ack,
++	.irq_mask		= latte_pic_mask,
++	.irq_unmask		= latte_pic_unmask,
++	.irq_set_affinity	= latte_pic_set_affinity
+ };
+ 
+ /*
+diff --git a/arch/powerpc/platforms/wiiu/setup.c b/arch/powerpc/platforms/wiiu/setup.c
+index fecbe4bf5..47c82d25d 100644
+--- a/arch/powerpc/platforms/wiiu/setup.c
++++ b/arch/powerpc/platforms/wiiu/setup.c
+@@ -12,6 +12,7 @@
+ 
+ #include <asm/machdep.h>
+ #include <asm/udbg.h>
++#include <asm/interrupt.h>
+ 
+ #include "espresso-pic.h"
+ #include "latte-pic.h"
+@@ -64,13 +65,125 @@ static int __init wiiu_device_probe(void)
+ }
+ device_initcall(wiiu_device_probe);
+ 
++#ifdef CONFIG_SMP
++static void __init wiiu_smp_probe(void)
++{
++	// ..?
++}
++
++static void wiiu_do_exi_bootstub(unsigned long entry)
++{
++	void __iomem *exi_iob;
++	int i;
++
++	exi_iob = ioremap(0x08100100, 16);
++	if (!exi_iob)
++	{
++		pr_err("%s: couldn't map EXI!\n", __func__);
++		return;
++	}
++
++	//printk("value of...")
++
++	// lis r3, entry@h
++	iowrite32be(0x3c600000 | entry >> 16, exi_iob + 4 * 0);
++	// ori r3, r3, entry@l
++	iowrite32be(0x60630000 | (entry & 0xffff), exi_iob + 4 * 1);
++	// mtsrr0 r3
++	iowrite32be(0x7c7a03a6, exi_iob + 4 * 2);
++	// li r3, 0
++	iowrite32be(0x38600000, exi_iob + 4 * 3);
++	// mtsrr1 r3
++	iowrite32be(0x7c7b03a6, exi_iob + 4 * 4);
++	// rfi
++	iowrite32be(0x4c000064, exi_iob + 4 * 5);
++
++	for (i = 6; i < 0x10; ++i)
++		iowrite32be(0, exi_iob + 4 * i);
++	printk("%s: EXI bootstub setup OK!\n", __func__);
++}
++
++extern void __secondary_start_wiiu(void); // head_book3s_32.S
++
++static int wiiu_kick_cpu(int nr)
++{
++	int n;
++
++	wiiu_do_exi_bootstub(virt_to_phys(&__secondary_start_wiiu));
++	printk("%s: starting CPU %d\n", __func__, nr);
++
++	if (nr == 1 || nr == 2)
++		mtspr(SPRN_SCR_ESPRESSO, mfspr(SPRN_SCR_ESPRESSO) | (1 << (23 - nr)));
++	else
++		return -ENOENT;
++
++	/* Wait for the CPU to come up */
++	for (n = 0; n < 1000; n++) {
++		dcbi(&__secondary_hold_acknowledge);
++		if (__secondary_hold_acknowledge == nr)
++			break;
++
++		udelay(1000);
++	}
++
++	if (__secondary_hold_acknowledge == nr)
++		printk("%s: cpu %d ok\n", __func__, nr);
++	else
++		printk("%s: cpu %d gave invalid ack: %08lx\n", __func__, nr, __secondary_hold_acknowledge);
++
++	return 0;
++}
++
++static void wiiu_ipi_cpu(int cpu)
++{
++	unsigned long scr, mask = 1 << (20 - cpu);
++
++	if ((scr = mfspr(SPRN_SCR_ESPRESSO)), scr & mask)
++		printk("%s: cpu %d already had ipi pending? %08lx\n", __func__, cpu, scr);
++
++	while ((scr = mfspr(SPRN_SCR_ESPRESSO)), !(scr & mask))
++		mtspr(SPRN_SCR_ESPRESSO, scr | mask);
++}
++
++struct smp_ops_t espresso_smp_ops = {
++	.probe		= wiiu_smp_probe,
++	.message_pass	= NULL, /* Use smp_muxed_ipi_message_pass */
++	.cause_ipi	= wiiu_ipi_cpu,
++	.cause_nmi_ipi	= NULL,
++	.kick_cpu	= wiiu_kick_cpu,
++};
++
++#endif // CONFIG_SMP
++
++DEFINE_INTERRUPT_HANDLER_ASYNC(TAUException)
++{
++	unsigned int cpu = smp_processor_id();
++	unsigned long scr, mask = 1 << (20 - cpu);
++
++	// ack the irq
++	while ((scr = mfspr(SPRN_SCR_ESPRESSO)), scr & mask)
++		mtspr(SPRN_SCR_ESPRESSO, scr & ~mask);
++
++#ifdef CONFIG_SMP
++	smp_ipi_demux();
++#endif
++}
++
++static void __init wiiu_setup_arch(void)
++{
++#ifdef CONFIG_SMP
++	smp_ops = &espresso_smp_ops;
++#endif
++}
++
+ define_machine(wiiu) {
+-	.name = "wiiu",
+-	.probe = wiiu_probe,
+-	.halt = wiiu_halt,
+-	.progress = udbg_progress,
+-	.calibrate_decr = generic_calibrate_decr,
+-	.init_IRQ = wiiu_init_irq,
+-	.get_irq = espresso_pic_get_irq,
+-	.restart = wiiu_restart,
++	.name		= "wiiu",
++	.probe		= wiiu_probe,
++	.setup_arch	= wiiu_setup_arch,
++	.halt		= wiiu_halt,
++	.progress	= udbg_progress,
++	.calibrate_decr	= generic_calibrate_decr,
++	.init_IRQ	= wiiu_init_irq,
++	.get_irq	= espresso_pic_get_irq,
++	.restart	= wiiu_restart,
+ };

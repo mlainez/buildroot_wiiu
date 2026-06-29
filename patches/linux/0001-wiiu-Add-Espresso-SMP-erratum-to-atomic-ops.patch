@@ -1,0 +1,663 @@
+From f3d51fd295e8d96ad11d522f822635db02686519 Mon Sep 17 00:00:00 2001
+From: Ash Logan <ash@heyquark.com>
+Date: Sat, 2 Nov 2024 19:28:47 +1100
+Subject: [PATCH 1/2] wiiu: Add Espresso SMP erratum to atomic ops
+
+Note I had to do a full make clean to get a proper build out of this
+---
+ arch/powerpc/include/asm/asm-espresso.h      | 18 ++++++++++++++++++
+ arch/powerpc/include/asm/atomic.h            |  6 ++++++
+ arch/powerpc/include/asm/bitops.h            |  7 +++++++
+ arch/powerpc/include/asm/book3s/32/pgtable.h |  2 ++
+ arch/powerpc/include/asm/cmpxchg.h           | 10 ++++++++++
+ arch/powerpc/include/asm/edac.h              |  7 +++++--
+ arch/powerpc/include/asm/futex.h             |  7 +++++--
+ arch/powerpc/include/asm/qspinlock.h         |  2 ++
+ arch/powerpc/include/asm/simple_spinlock.h   |  9 +++++++--
+ arch/powerpc/kernel/entry_32.S               |  4 ++++
+ arch/powerpc/kvm/book3s_hv_rmhandlers.S      |  6 ++++++
+ arch/powerpc/lib/qspinlock.c                 |  8 +++++++-
+ arch/powerpc/lib/sstep.c                     |  8 +++++++-
+ arch/powerpc/mm/book3s32/hash_low.S          |  7 +++++++
+ arch/powerpc/mm/book3s32/nohash_low.S        |  3 +++
+ arch/powerpc/platforms/wiiu/Kconfig          |  7 +++++++
+ 16 files changed, 103 insertions(+), 8 deletions(-)
+ create mode 100644 arch/powerpc/include/asm/asm-espresso.h
+
+diff --git a/arch/powerpc/include/asm/asm-espresso.h b/arch/powerpc/include/asm/asm-espresso.h
+new file mode 100644
+index 000000000..35301f16d
+--- /dev/null
++++ b/arch/powerpc/include/asm/asm-espresso.h
+@@ -0,0 +1,18 @@
++#ifndef _ASM_POWERPC_ASM_ESPRESSO_H
++#define _ASM_POWERPC_ASM_ESPRESSO_H
++
++#include <asm/asm-const.h>
++
++#ifdef __KERNEL__
++
++/* The Espresso has an undocumented erratum where every stwcx needs a dcbst immediately before it.
++ */
++#ifdef CONFIG_ESPRESSO_ERRATA
++#define PPCESPRESSO_ERRATA(ra, rb)	stringify_in_c(dcbst ra, rb;)
++#else
++#define PPCESPRESSO_ERRATA(ra, rb)
++#endif
++
++#endif /* __KERNEL__ */
++
++#endif /* _ASM_POWERPC_ASM_ESPRESSO_H */
+diff --git a/arch/powerpc/include/asm/atomic.h b/arch/powerpc/include/asm/atomic.h
+index d1ea554c3..005cc7817 100644
+--- a/arch/powerpc/include/asm/atomic.h
++++ b/arch/powerpc/include/asm/atomic.h
+@@ -12,6 +12,7 @@
+ #include <asm/barrier.h>
+ #include <asm/asm-const.h>
+ #include <asm/asm-compat.h>
++#include <asm/asm-espresso.h>
+ 
+ /*
+  * Since *_return_relaxed and {cmp}xchg_relaxed are implemented with
+@@ -54,6 +55,7 @@ static __inline__ void arch_atomic_##op(int a, atomic_t *v)		\
+ 	__asm__ __volatile__(						\
+ "1:	lwarx	%0,0,%3		# atomic_" #op "\n"			\
+ 	#asm_op "%I2" suffix " %0,%0,%2\n"				\
++	PPCESPRESSO_ERRATA(0,%3)					\
+ "	stwcx.	%0,0,%3 \n"						\
+ "	bne-	1b\n"							\
+ 	: "=&r" (t), "+m" (v->counter)					\
+@@ -69,6 +71,7 @@ static inline int arch_atomic_##op##_return_relaxed(int a, atomic_t *v)	\
+ 	__asm__ __volatile__(						\
+ "1:	lwarx	%0,0,%3		# atomic_" #op "_return_relaxed\n"	\
+ 	#asm_op "%I2" suffix " %0,%0,%2\n"				\
++	PPCESPRESSO_ERRATA(0,%3)					\
+ "	stwcx.	%0,0,%3\n"						\
+ "	bne-	1b\n"							\
+ 	: "=&r" (t), "+m" (v->counter)					\
+@@ -86,6 +89,7 @@ static inline int arch_atomic_fetch_##op##_relaxed(int a, atomic_t *v)	\
+ 	__asm__ __volatile__(						\
+ "1:	lwarx	%0,0,%4		# atomic_fetch_" #op "_relaxed\n"	\
+ 	#asm_op "%I3" suffix " %1,%0,%3\n"				\
++	PPCESPRESSO_ERRATA(0,%4)					\
+ "	stwcx.	%1,0,%4\n"						\
+ "	bne-	1b\n"							\
+ 	: "=&r" (res), "=&r" (t), "+m" (v->counter)			\
+@@ -146,6 +150,7 @@ static __inline__ int arch_atomic_fetch_add_unless(atomic_t *v, int a, int u)
+ 	cmpw	0,%0,%3 \n\
+ 	beq	2f \n\
+ 	add%I2c	%0,%0,%2 \n"
++	PPCESPRESSO_ERRATA(0,%1)
+ "	stwcx.	%0,0,%1 \n\
+ 	bne-	1b \n"
+ 	PPC_ATOMIC_EXIT_BARRIER
+@@ -174,6 +179,7 @@ static __inline__ int arch_atomic_dec_if_positive(atomic_t *v)
+ 	cmpwi	%0,1\n\
+ 	addi	%0,%0,-1\n\
+ 	blt-	2f\n"
++	PPCESPRESSO_ERRATA(0,%1)
+ "	stwcx.	%0,0,%1\n\
+ 	bne-	1b"
+ 	PPC_ATOMIC_EXIT_BARRIER
+diff --git a/arch/powerpc/include/asm/bitops.h b/arch/powerpc/include/asm/bitops.h
+index 7e0f03229..d5b2294a4 100644
+--- a/arch/powerpc/include/asm/bitops.h
++++ b/arch/powerpc/include/asm/bitops.h
+@@ -41,6 +41,7 @@
+ #include <linux/compiler.h>
+ #include <asm/asm-compat.h>
+ #include <asm/synch.h>
++#include <asm/asm-espresso.h>
+ 
+ /* PPC bit number conversion */
+ #define PPC_BITLSHIFT(be)	(BITS_PER_LONG - 1 - (be))
+@@ -72,6 +73,7 @@ static inline void fn(unsigned long mask,	\
+ 	prefix					\
+ "1:"	PPC_LLARX "%0,0,%3,0\n"			\
+ 	#op "%I2 %0,%0,%2\n"			\
++	PPCESPRESSO_ERRATA(0,%3)		\
+ 	PPC_STLCX "%0,0,%3\n"			\
+ 	"bne- 1b\n"				\
+ 	: "=&r" (old), "+m" (*p)		\
+@@ -105,6 +107,7 @@ static inline void fn(unsigned long mask, volatile unsigned long *_p)	\
+ 			prefix						\
+ 		"1:"	"lwarx	%0,0,%3\n"				\
+ 			"rlwinm	%0,%0,0,%2\n"				\
++			PPCESPRESSO_ERRATA(0,%3)			\
+ 			"stwcx.	%0,0,%3\n"				\
+ 			"bne- 1b\n"					\
+ 			: "=&r" (old), "+m" (*p)			\
+@@ -115,6 +118,7 @@ static inline void fn(unsigned long mask, volatile unsigned long *_p)	\
+ 			prefix						\
+ 		"1:"	PPC_LLARX "%0,0,%3,0\n"				\
+ 			"andc %0,%0,%2\n"				\
++			PPCESPRESSO_ERRATA(0,%3)			\
+ 			PPC_STLCX "%0,0,%3\n"				\
+ 			"bne- 1b\n"					\
+ 			: "=&r" (old), "+m" (*p)			\
+@@ -159,6 +163,7 @@ static inline unsigned long fn(			\
+ 	prefix						\
+ "1:"	PPC_LLARX "%0,0,%3,%4\n"			\
+ 	#op "%I2 %1,%0,%2\n"				\
++	PPCESPRESSO_ERRATA(0,%3)			\
+ 	PPC_STLCX "%1,0,%3\n"				\
+ 	"bne- 1b\n"					\
+ 	postfix						\
+@@ -186,6 +191,7 @@ static inline unsigned long test_and_clear_bits(unsigned long mask, volatile uns
+ 			PPC_ATOMIC_ENTRY_BARRIER
+ 		"1:"	"lwarx %0,0,%3\n"
+ 			"rlwinm	%1,%0,0,%2\n"
++			PPCESPRESSO_ERRATA(0,%3)
+ 			"stwcx. %1,0,%3\n"
+ 			"bne- 1b\n"
+ 			PPC_ATOMIC_EXIT_BARRIER
+@@ -197,6 +203,7 @@ static inline unsigned long test_and_clear_bits(unsigned long mask, volatile uns
+ 			PPC_ATOMIC_ENTRY_BARRIER
+ 		"1:"	PPC_LLARX "%0,0,%3,0\n"
+ 			"andc	%1,%0,%2\n"
++			PPCESPRESSO_ERRATA(0,%3)
+ 			PPC_STLCX "%1,0,%3\n"
+ 			"bne- 1b\n"
+ 			PPC_ATOMIC_EXIT_BARRIER
+diff --git a/arch/powerpc/include/asm/book3s/32/pgtable.h b/arch/powerpc/include/asm/book3s/32/pgtable.h
+index 9b13eb14e..2edff6dbc 100644
+--- a/arch/powerpc/include/asm/book3s/32/pgtable.h
++++ b/arch/powerpc/include/asm/book3s/32/pgtable.h
+@@ -3,6 +3,7 @@
+ #define _ASM_POWERPC_BOOK3S_32_PGTABLE_H
+ 
+ #include <asm-generic/pgtable-nopmd.h>
++#include <asm/asm-espresso.h>
+ 
+ /*
+  * The "classic" 32-bit implementation of the PowerPC MMU uses a hash
+@@ -295,6 +296,7 @@ static inline pte_basic_t pte_update(struct mm_struct *mm, unsigned long addr, p
+ 	"	andc	%1, %L0, %4\n"
+ #endif
+ 	"	or	%1, %1, %5\n"
++		PPCESPRESSO_ERRATA(0,%3)
+ 	"	stwcx.	%1, 0, %3\n"
+ 	"	bne-	1b"
+ 		: "=&r" (old), "=&r" (tmp), "=m" (*p)
+diff --git a/arch/powerpc/include/asm/cmpxchg.h b/arch/powerpc/include/asm/cmpxchg.h
+index dbb50c06f..7005d09d1 100644
+--- a/arch/powerpc/include/asm/cmpxchg.h
++++ b/arch/powerpc/include/asm/cmpxchg.h
+@@ -6,6 +6,7 @@
+ #include <linux/compiler.h>
+ #include <asm/synch.h>
+ #include <linux/bug.h>
++#include <asm/asm-espresso.h>
+ 
+ #ifdef __BIG_ENDIAN
+ #define BITOFF_CAL(size, off)	((sizeof(u32) - size - off) * BITS_PER_BYTE)
+@@ -28,6 +29,7 @@ static inline u32 __xchg_##type##sfx(volatile void *p, u32 val)	\
+ "1:	lwarx   %0,0,%3\n"					\
+ "	andc	%1,%0,%5\n"					\
+ "	or	%1,%1,%4\n"					\
++	PPCESPRESSO_ERRATA(0,%3)				\
+ "	stwcx.	%1,0,%3\n"					\
+ "	bne-	1b\n"						\
+ 	: "=&r" (prev), "=&r" (tmp), "+m" (*(u32*)p)		\
+@@ -58,6 +60,7 @@ u32 __cmpxchg_##type##sfx(volatile void *p, u32 old, u32 new)	\
+ "	bne-	2f\n"						\
+ "	andc	%1,%0,%6\n"					\
+ "	or	%1,%1,%5\n"					\
++	PPCESPRESSO_ERRATA(0,%3)				\
+ "	stwcx.  %1,0,%3\n"					\
+ "	bne-    1b\n"						\
+ 	br2							\
+@@ -83,6 +86,7 @@ XCHG_GEN(u8, _relaxed, "cc");
+ XCHG_GEN(u16, _local, "memory");
+ XCHG_GEN(u16, _relaxed, "cc");
+ #else
++#warning WUH-OH
+ static __always_inline unsigned long
+ __xchg_u8_local(volatile void *p, unsigned long val)
+ {
+@@ -155,6 +159,7 @@ __xchg_u32_local(volatile void *p, unsigned long val)
+ 
+ 	__asm__ __volatile__(
+ "1:	lwarx	%0,0,%2 \n"
++	PPCESPRESSO_ERRATA(0,%2)
+ "	stwcx.	%3,0,%2 \n\
+ 	bne-	1b"
+ 	: "=&r" (prev), "+m" (*(volatile unsigned int *)p)
+@@ -171,6 +176,7 @@ __xchg_u32_relaxed(u32 *p, unsigned long val)
+ 
+ 	__asm__ __volatile__(
+ "1:	lwarx	%0,0,%2\n"
++	PPCESPRESSO_ERRATA(0,%2)
+ "	stwcx.	%3,0,%2\n"
+ "	bne-	1b"
+ 	: "=&r" (prev), "+m" (*p)
+@@ -451,6 +457,7 @@ __cmpxchg_u32(volatile unsigned int *p, unsigned long old, unsigned long new)
+ "1:	lwarx	%0,0,%2		# __cmpxchg_u32\n\
+ 	cmpw	0,%0,%3\n\
+ 	bne-	2f\n"
++	PPCESPRESSO_ERRATA(0,%2)
+ "	stwcx.	%4,0,%2\n\
+ 	bne-	1b"
+ 	PPC_ATOMIC_EXIT_BARRIER
+@@ -473,6 +480,7 @@ __cmpxchg_u32_local(volatile unsigned int *p, unsigned long old,
+ "1:	lwarx	%0,0,%2		# __cmpxchg_u32\n\
+ 	cmpw	0,%0,%3\n\
+ 	bne-	2f\n"
++	PPCESPRESSO_ERRATA(0,%2)
+ "	stwcx.	%4,0,%2\n\
+ 	bne-	1b"
+ 	"\n\
+@@ -493,6 +501,7 @@ __cmpxchg_u32_relaxed(u32 *p, unsigned long old, unsigned long new)
+ "1:	lwarx	%0,0,%2		# __cmpxchg_u32_relaxed\n"
+ "	cmpw	0,%0,%3\n"
+ "	bne-	2f\n"
++	PPCESPRESSO_ERRATA(0,%2)
+ "	stwcx.	%4,0,%2\n"
+ "	bne-	1b\n"
+ "2:"
+@@ -520,6 +529,7 @@ __cmpxchg_u32_acquire(u32 *p, unsigned long old, unsigned long new)
+ "1:	lwarx	%0,0,%2		# __cmpxchg_u32_acquire\n"
+ "	cmpw	0,%0,%3\n"
+ "	bne-	2f\n"
++	PPCESPRESSO_ERRATA(0,%2)
+ "	stwcx.	%4,0,%2\n"
+ "	bne-	1b\n"
+ 	PPC_ACQUIRE_BARRIER
+diff --git a/arch/powerpc/include/asm/edac.h b/arch/powerpc/include/asm/edac.h
+index 5571e23d2..b5808e4a2 100644
+--- a/arch/powerpc/include/asm/edac.h
++++ b/arch/powerpc/include/asm/edac.h
+@@ -10,6 +10,8 @@
+  */
+ #ifndef ASM_EDAC_H
+ #define ASM_EDAC_H
++#include <asm/asm-espresso.h>
++
+ /*
+  * ECC atomic, DMA, SMP and interrupt safe scrub function.
+  * Implements the per arch edac_atomic_scrub() that EDAC use for software
+@@ -27,8 +29,9 @@ static __inline__ void edac_atomic_scrub(void *va, u32 size)
+ 		 * so we are interrupt, DMA and SMP safe.
+ 		 */
+ 		__asm__ __volatile__ ("\n\
+-				1:	lwarx	%0,0,%1\n\
+-					stwcx.	%0,0,%1\n\
++				1:	lwarx	%0,0,%1\n\"
++					PPCESPRESSO_ERRATA(0,%1)
++				"	stwcx.	%0,0,%1\n\
+ 					bne-	1b\n\
+ 					isync"
+ 					: "=&r"(temp)
+diff --git a/arch/powerpc/include/asm/futex.h b/arch/powerpc/include/asm/futex.h
+index b3001f8b2..38a55b4f8 100644
+--- a/arch/powerpc/include/asm/futex.h
++++ b/arch/powerpc/include/asm/futex.h
+@@ -8,13 +8,15 @@
+ #include <linux/uaccess.h>
+ #include <asm/errno.h>
+ #include <asm/synch.h>
++#include <asm/asm-espresso.h>
+ 
+ #define __futex_atomic_op(insn, ret, oldval, uaddr, oparg) \
+   __asm__ __volatile ( \
+ 	PPC_ATOMIC_ENTRY_BARRIER \
+ "1:	lwarx	%0,0,%2\n" \
+ 	insn \
+-"2:	stwcx.	%1,0,%2\n" \
++"2:"	PPCESPRESSO_ERRATA(0,%2) \
++	"stwcx.	%1,0,%2\n" \
+ 	"bne-	1b\n" \
+ 	PPC_ATOMIC_EXIT_BARRIER \
+ 	"li	%1,0\n" \
+@@ -77,7 +79,8 @@ futex_atomic_cmpxchg_inatomic(u32 *uval, u32 __user *uaddr,
+ "1:     lwarx   %1,0,%3         # futex_atomic_cmpxchg_inatomic\n\
+         cmpw    0,%1,%4\n\
+         bne-    3f\n"
+-"2:     stwcx.  %5,0,%3\n\
++"2:"	PPCESPRESSO_ERRATA(0,%3)
++"       stwcx.  %5,0,%3\n\
+         bne-    1b\n"
+         PPC_ATOMIC_EXIT_BARRIER
+ "3:	.section .fixup,\"ax\"\n\
+diff --git a/arch/powerpc/include/asm/qspinlock.h b/arch/powerpc/include/asm/qspinlock.h
+index 28a53fb69..579936aa8 100644
+--- a/arch/powerpc/include/asm/qspinlock.h
++++ b/arch/powerpc/include/asm/qspinlock.h
+@@ -99,6 +99,7 @@ static __always_inline int __queued_spin_trylock_nosteal(struct qspinlock *lock)
+ "1:	lwarx	%0,0,%1,%3	# __queued_spin_trylock_nosteal		\n"
+ "	cmpwi	0,%0,0							\n"
+ "	bne-	2f							\n"
++	PPCESPRESSO_ERRATA(0,%1)
+ "	stwcx.	%2,0,%1							\n"
+ "	bne-	1b							\n"
+ "\t"	PPC_ACQUIRE_BARRIER "						\n"
+@@ -123,6 +124,7 @@ static __always_inline int __queued_spin_trylock_steal(struct qspinlock *lock)
+ "	bne-	2f							\n"
+ "	and	%1,%0,%4						\n"
+ "	or	%1,%1,%3						\n"
++	PPCESPRESSO_ERRATA(0,%2)
+ "	stwcx.	%1,0,%2							\n"
+ "	bne-	1b							\n"
+ "\t"	PPC_ACQUIRE_BARRIER "						\n"
+diff --git a/arch/powerpc/include/asm/simple_spinlock.h b/arch/powerpc/include/asm/simple_spinlock.h
+index 4dd12dcb9..9d0d26b7a 100644
+--- a/arch/powerpc/include/asm/simple_spinlock.h
++++ b/arch/powerpc/include/asm/simple_spinlock.h
+@@ -20,6 +20,7 @@
+ #include <asm/paca.h>
+ #include <asm/synch.h>
+ #include <asm/ppc-opcode.h>
++#include <asm/asm-espresso.h>
+ 
+ #ifdef CONFIG_PPC64
+ /* use 0x800000yy when locked, where yy == CPU number */
+@@ -55,8 +56,9 @@ static inline unsigned long __arch_spin_trylock(arch_spinlock_t *lock)
+ 	__asm__ __volatile__(
+ "1:	lwarx		%0,0,%2,%[eh]\n\
+ 	cmpwi		0,%0,0\n\
+-	bne-		2f\n\
+-	stwcx.		%1,0,%2\n\
++	bne-		2f\n"
++	PPCESPRESSO_ERRATA(0,%2)
++"	stwcx.		%1,0,%2\n\
+ 	bne-		1b\n"
+ 	PPC_ACQUIRE_BARRIER
+ "2:"
+@@ -166,6 +168,7 @@ static inline long __arch_read_trylock(arch_rwlock_t *rw)
+ 	__DO_SIGN_EXTEND
+ "	addic.		%0,%0,1\n\
+ 	ble-		2f\n"
++	PPCESPRESSO_ERRATA(0,%1)
+ "	stwcx.		%0,0,%1\n\
+ 	bne-		1b\n"
+ 	PPC_ACQUIRE_BARRIER
+@@ -190,6 +193,7 @@ static inline long __arch_write_trylock(arch_rwlock_t *rw)
+ "1:	lwarx		%0,0,%2,%[eh]\n\
+ 	cmpwi		0,%0,0\n\
+ 	bne-		2f\n"
++	PPCESPRESSO_ERRATA(0,%2)
+ "	stwcx.		%1,0,%2\n\
+ 	bne-		1b\n"
+ 	PPC_ACQUIRE_BARRIER
+@@ -247,6 +251,7 @@ static inline void arch_read_unlock(arch_rwlock_t *rw)
+ 	PPC_RELEASE_BARRIER
+ "1:	lwarx		%0,0,%1\n\
+ 	addic		%0,%0,-1\n"
++	PPCESPRESSO_ERRATA(0,%1)
+ "	stwcx.		%0,0,%1\n\
+ 	bne-		1b"
+ 	: "=&r"(tmp)
+diff --git a/arch/powerpc/kernel/entry_32.S b/arch/powerpc/kernel/entry_32.S
+index 7eda33a24..aeeb53051 100644
+--- a/arch/powerpc/kernel/entry_32.S
++++ b/arch/powerpc/kernel/entry_32.S
+@@ -34,6 +34,7 @@
+ #include <asm/kup.h>
+ #include <asm/bug.h>
+ #include <asm/interrupt.h>
++#include <asm/asm-espresso.h>
+ 
+ #include "head_32.h"
+ 
+@@ -268,6 +269,7 @@ interrupt_return:
+ 	mtspr	SPRN_SRR0,r11
+ 	mtspr	SPRN_SRR1,r12
+ 
++	PPCESPRESSO_ERRATA(0,r1)
+ BEGIN_FTR_SECTION
+ 	stwcx.	r0,0,r1		/* to clear the reservation */
+ FTR_SECTION_ELSE
+@@ -314,6 +316,7 @@ ALT_FTR_SECTION_END_IFCLR(CPU_FTR_STCX_CHECKS_ADDRESS)
+ 	mtspr	SPRN_SRR0,r11
+ 	mtspr	SPRN_SRR1,r12
+ 
++	PPCESPRESSO_ERRATA(0,r1)
+ BEGIN_FTR_SECTION
+ 	stwcx.	r0,0,r1		/* to clear the reservation */
+ FTR_SECTION_ELSE
+@@ -418,6 +421,7 @@ _ASM_NOKPROBE_SYMBOL(interrupt_return)
+ 	lwz	r11,_CTR(r1);						\
+ 	mtspr	SPRN_XER,r10;						\
+ 	mtctr	r11;							\
++	PPCESPRESSO_ERRATA(0,r1)					\
+ 	stwcx.	r0,0,r1;		/* to clear the reservation */	\
+ 	lwz	r11,_LINK(r1);						\
+ 	mtlr	r11;							\
+diff --git a/arch/powerpc/kvm/book3s_hv_rmhandlers.S b/arch/powerpc/kvm/book3s_hv_rmhandlers.S
+index ea7ad200b..cc3a755a9 100644
+--- a/arch/powerpc/kvm/book3s_hv_rmhandlers.S
++++ b/arch/powerpc/kvm/book3s_hv_rmhandlers.S
+@@ -31,6 +31,7 @@
+ #include <asm/asm-compat.h>
+ #include <asm/feature-fixups.h>
+ #include <asm/cpuidle.h>
++#include <asm/asm-espresso.h>
+ 
+ /* Values in HSTATE_NAPPING(r13) */
+ #define NAPPING_CEDE	1
+@@ -171,6 +172,7 @@ kvmppc_primary_no_guest:
+ 	addi	r6, r5, VCORE_NAPPING_THREADS
+ 1:	lwarx	r3, 0, r6
+ 	or	r3, r3, r0
++	PPCESPRESSO_ERRATA(0,r6)
+ 	stwcx.	r3, 0, r6
+ 	bne	1b
+ 	/* order napping_threads update vs testing entry_exit_map */
+@@ -220,6 +222,7 @@ kvm_novcpu_wakeup:
+ 	addi	r6, r5, VCORE_NAPPING_THREADS
+ 4:	lwarx	r7, 0, r6
+ 	andc	r7, r7, r0
++	PPCESPRESSO_ERRATA(0,r6)
+ 	stwcx.	r7, 0, r6
+ 	bne	4b
+ 
+@@ -550,6 +553,7 @@ SYM_CODE_START_LOCAL(kvmppc_hv_entry)
+ 	cmpwi	r3, 0x100		/* any threads starting to exit? */
+ 	bge	secondary_too_late	/* if so we're too late to the party */
+ 	or	r3, r3, r7
++	PPCESPRESSO_ERRATA(0,r8)
+ 	stwcx.	r3, 0, r8
+ 	bne	21b
+ 
+@@ -2084,6 +2088,7 @@ _GLOBAL(kvmppc_h_cede)		/* r3 = vcpu pointer, r11 = msr, r13 = paca */
+ 	or	r4,r4,r0
+ 	cmpw	r4,r8
+ 	beq	kvm_cede_exit
++	PPCESPRESSO_ERRATA(0,r6)
+ 	stwcx.	r4,0,r6
+ 	bne	31b
+ 	/* order napping_threads update vs testing entry_exit_map */
+@@ -2296,6 +2301,7 @@ END_FTR_SECTION_IFCLR(CPU_FTR_TM)
+ 	addi	r6,r5,VCORE_NAPPING_THREADS
+ 32:	lwarx	r7,0,r6
+ 	andc	r7,r7,r0
++	PPCESPRESSO_ERRATA(0,r6)
+ 	stwcx.	r7,0,r6
+ 	bne	32b
+ 	li	r0,0
+diff --git a/arch/powerpc/lib/qspinlock.c b/arch/powerpc/lib/qspinlock.c
+index 883026778..31ae885d4 100644
+--- a/arch/powerpc/lib/qspinlock.c
++++ b/arch/powerpc/lib/qspinlock.c
+@@ -9,6 +9,7 @@
+ #include <linux/sched/clock.h>
+ #include <asm/qspinlock.h>
+ #include <asm/paravirt.h>
++#include <asm/asm-espresso.h>
+ 
+ #define MAX_NODES	4
+ 
+@@ -136,7 +137,8 @@ static __always_inline u32 trylock_clean_tail(struct qspinlock *lock, u32 tail)
+ "	bne	2f							\n"
+ 	/* If the lock tail matched, then clear it, otherwise leave it. */
+ "	andc	%1,%1,%6						\n"
+-"2:	stwcx.	%1,0,%2							\n"
++"2:"	PPCESPRESSO_ERRATA(0,%2)
++"	stwcx.	%1,0,%2							\n"
+ "	bne-	1b							\n"
+ "\t"	PPC_ACQUIRE_BARRIER "						\n"
+ "3:									\n"
+@@ -168,6 +170,7 @@ static __always_inline u32 publish_tail_cpu(struct qspinlock *lock, u32 tail)
+ "1:	lwarx	%0,0,%2		# publish_tail_cpu			\n"
+ "	andc	%1,%0,%4						\n"
+ "	or	%1,%1,%3						\n"
++	PPCESPRESSO_ERRATA(0,%2)
+ "	stwcx.	%1,0,%2							\n"
+ "	bne-	1b							\n"
+ 	: "=&r" (prev), "=&r"(tmp)
+@@ -184,6 +187,7 @@ static __always_inline u32 set_mustq(struct qspinlock *lock)
+ 	asm volatile(
+ "1:	lwarx	%0,0,%1		# set_mustq				\n"
+ "	or	%0,%0,%2						\n"
++	PPCESPRESSO_ERRATA(0,%1)
+ "	stwcx.	%0,0,%1							\n"
+ "	bne-	1b							\n"
+ 	: "=&r" (prev)
+@@ -200,6 +204,7 @@ static __always_inline u32 clear_mustq(struct qspinlock *lock)
+ 	asm volatile(
+ "1:	lwarx	%0,0,%1		# clear_mustq				\n"
+ "	andc	%0,%0,%2						\n"
++	PPCESPRESSO_ERRATA(0,%1)
+ "	stwcx.	%0,0,%1							\n"
+ "	bne-	1b							\n"
+ 	: "=&r" (prev)
+@@ -221,6 +226,7 @@ static __always_inline bool try_set_sleepy(struct qspinlock *lock, u32 old)
+ "1:	lwarx	%0,0,%1		# try_set_sleepy			\n"
+ "	cmpw	0,%0,%2							\n"
+ "	bne-	2f							\n"
++	PPCESPRESSO_ERRATA(0,%1)
+ "	stwcx.	%3,0,%1							\n"
+ "	bne-	1b							\n"
+ "2:									\n"
+diff --git a/arch/powerpc/lib/sstep.c b/arch/powerpc/lib/sstep.c
+index efbf18078..7887d288d 100644
+--- a/arch/powerpc/lib/sstep.c
++++ b/arch/powerpc/lib/sstep.c
+@@ -3386,9 +3386,15 @@ int emulate_loadstore(struct pt_regs *regs, struct instruction_op *op)
+ 			__put_user_asmx(op->val, ea, err, "sthcx.", cr);
+ 			break;
+ #endif
+-		case 4:
++		case 4: {
++#ifdef CONFIG_ESPRESSO_ERRATA
++			// Terrifying.
++			__cacheop_user_asmx(ea, err, "dcbst");
++#endif
+ 			__put_user_asmx(op->val, ea, err, "stwcx.", cr);
+ 			break;
++		}
++
+ #ifdef __powerpc64__
+ 		case 8:
+ 			__put_user_asmx(op->val, ea, err, "stdcx.", cr);
+diff --git a/arch/powerpc/mm/book3s32/hash_low.S b/arch/powerpc/mm/book3s32/hash_low.S
+index 8b804e1a9..65e10a6c2 100644
+--- a/arch/powerpc/mm/book3s32/hash_low.S
++++ b/arch/powerpc/mm/book3s32/hash_low.S
+@@ -25,6 +25,7 @@
+ #include <asm/asm-offsets.h>
+ #include <asm/feature-fixups.h>
+ #include <asm/code-patching-asm.h>
++#include <asm/asm-espresso.h>
+ 
+ #ifdef CONFIG_PTE_64BIT
+ #define PTE_T_SIZE		8
+@@ -59,6 +60,7 @@ _GLOBAL(hash_page)
+ 10:	lwarx	r6,0,r8
+ 	cmpwi	0,r6,0
+ 	bne-	11b
++	PPCESPRESSO_ERRATA(0,r8)
+ 	stwcx.	r0,0,r8
+ 	bne-	10b
+ 	isync
+@@ -138,6 +140,7 @@ _GLOBAL(hash_page)
+ 	lwz	r10,-PTE_FLAGS_OFFSET(r8)
+ #endif /* CONFIG_SMP */
+ #endif /* CONFIG_PTE_64BIT */
++	PPCESPRESSO_ERRATA(0,r8)
+ 	stwcx.	r5,0,r8			/* attempt to update PTE */
+ 	bne-	.Lretry			/* retry if someone got there first */
+ 
+@@ -201,6 +204,7 @@ _GLOBAL(add_hash_page)
+ 10:	lwarx	r0,0,r6			/* take the mmu_hash_lock */
+ 	cmpwi	0,r0,0
+ 	bne-	11f
++	PPCESPRESSO_ERRATA(0,r6)
+ 	stwcx.	r8,0,r6
+ 	beq+	12f
+ 11:	lwz	r0,0(r6)
+@@ -235,6 +239,7 @@ _GLOBAL(add_hash_page)
+ #endif /* CONFIG_SMP */
+ #endif /* CONFIG_PTE_64BIT */
+ 	ori	r5,r6,_PAGE_HASHPTE
++	PPCESPRESSO_ERRATA(0,r8)
+ 	stwcx.	r5,0,r8
+ 	bne-	1b
+ 
+@@ -514,6 +519,7 @@ _GLOBAL(flush_hash_pages)
+ 10:	lwarx	r0,0,r9
+ 	cmpwi	0,r0,0
+ 	bne-	11f
++	PPCESPRESSO_ERRATA(0,r9)
+ 	stwcx.	r8,0,r9
+ 	beq+	12f
+ 11:	lwz	r0,0(r9)
+@@ -532,6 +538,7 @@ _GLOBAL(flush_hash_pages)
+ 	andi.	r0,r8,_PAGE_HASHPTE
+ 	beq	8f			/* done if HASHPTE is already clear */
+ 	rlwinm	r8,r8,0,31,29		/* clear HASHPTE bit */
++	PPCESPRESSO_ERRATA(0,r5)
+ 	stwcx.	r8,0,r5			/* update the pte */
+ 	bne-	33b
+ 
+diff --git a/arch/powerpc/mm/book3s32/nohash_low.S b/arch/powerpc/mm/book3s32/nohash_low.S
+index 19f418b0e..7f47ba9be 100644
+--- a/arch/powerpc/mm/book3s32/nohash_low.S
++++ b/arch/powerpc/mm/book3s32/nohash_low.S
+@@ -7,6 +7,7 @@
+ #include <asm/page.h>
+ #include <asm/ppc_asm.h>
+ #include <asm/asm-offsets.h>
++#include <asm/asm-espresso.h>
+ 
+ /*
+  * Flush an entry from the TLB
+@@ -26,6 +27,7 @@ _GLOBAL(_tlbie)
+ 10:	lwarx	r7,0,r9
+ 	cmpwi	0,r7,0
+ 	bne-	10b
++	PPCESPRESSO_ERRATA(0,r9)
+ 	stwcx.	r8,0,r9
+ 	bne-	10b
+ 	eieio
+@@ -58,6 +60,7 @@ _GLOBAL(_tlbia)
+ 10:	lwarx	r7,0,r9
+ 	cmpwi	0,r7,0
+ 	bne-	10b
++	PPCESPRESSO_ERRATA(0,r9)
+ 	stwcx.	r8,0,r9
+ 	bne-	10b
+ #endif /* CONFIG_SMP */
+diff --git a/arch/powerpc/platforms/wiiu/Kconfig b/arch/powerpc/platforms/wiiu/Kconfig
+index 41ec95196..691dca5f0 100644
+--- a/arch/powerpc/platforms/wiiu/Kconfig
++++ b/arch/powerpc/platforms/wiiu/Kconfig
+@@ -9,6 +9,7 @@ config WIIU
+ 	select USB_ARCH_HAS_EHCI if USB_SUPPORT
+ 	select USB_EHCI_BIG_ENDIAN_MMIO if USB_SUPPORT
+ 	select USB_OHCI_BIG_ENDIAN_MMIO if USB_SUPPORT
++	select ESPRESSO_ERRATA
+ 	help
+ 	  Select WIIU if configuring for the Nintendo Wii U.
+ 	  More information at: <https://linux-wiiu.org/>
+@@ -38,3 +39,9 @@ config LATTEIPC_UDBG
+ 	  This driver bypasses the IPC layer completely.
+ 
+ 	  If in doubt, say N here.
++
++config ESPRESSO_ERRATA
++	bool
++	help
++	  The Espresso CPU has an undocumented errata where an explicit cache flush is needed for
++	  atomics. This adds such flushes throughout the kernel.
