@@ -1,3 +1,6 @@
 [submodule "buildroot"]
 	path = buildroot
 	url = https://gitlab.com/buildroot.org/buildroot.git
+[submodule "linux-loader"]
+	path = linux-loader
+	url = https://gitlab.com/linux-wiiu/linux-loader.git
